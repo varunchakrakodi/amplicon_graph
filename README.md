@@ -9,4 +9,5 @@ Python based script for predicting amplicons from a list of primers against a ge
 5. difflib (https://docs.python.org/3/library/difflib.html)
 
 Prepare a .csv file as given in primers.csv
+
 Supply a genome of interest for which you want to create a plot
