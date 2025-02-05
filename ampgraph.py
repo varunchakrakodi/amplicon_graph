@@ -1,14 +1,13 @@
-#import all needed libraries
 from Bio import SeqIO
 from Bio.Seq import Seq
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 from difflib import SequenceMatcher
+import numpy as np
 
 print("The program will predict possible amplicons generated using the input primers, against a supplied genome sequence.")
 
-#Predict amplicons accounting for up to 2 mismatches with primer sequences
 def find_primer_matches_with_mismatches(reference_seq_str, primer_seq, max_mismatches=2):
     matches = []
     for i in range(len(reference_seq_str) - len(primer_seq) + 1):
@@ -19,7 +18,7 @@ def find_primer_matches_with_mismatches(reference_seq_str, primer_seq, max_misma
             matches.append((i, i + len(primer_seq)))
     return matches
     
-def predict_amplicons(reference_fasta, primer_csv, min_amplicon_size=100, max_amplicon_size=500, max_mismatches=2):
+def predict_amplicons(reference_fasta, primer_csv, min_amplicon_size=100, max_amplicon_size=500, max_mismatches=3):
     reference_seq = SeqIO.read(reference_fasta, "fasta")
     reference_seq_str = str(reference_seq.seq)
 
@@ -50,7 +49,6 @@ def predict_amplicons(reference_fasta, primer_csv, min_amplicon_size=100, max_am
                             }
                             amplicons.append(amplicon)
 
-    # Graph it
     G = nx.Graph()
 
     for primer_label, _ in primers:
@@ -62,30 +60,59 @@ def predict_amplicons(reference_fasta, primer_csv, min_amplicon_size=100, max_am
         for primer_label in amplicon['primers']:
             G.add_edge(primer_label, amplicon['name'])
 
-    return G
+    return G, reference_seq_str, amplicons
+
+def calculate_coverage_without_overlap(amplicon_positions):
+    amplicon_positions.sort(key=lambda x: x[1])
+
+    covered_regions = []
+    for _, start, end in amplicon_positions:
+        new_region = (start, end)
+        merged = False
+        for i in range(len(covered_regions)):
+            existing_start, existing_end = covered_regions[i]
+            overlap_start = max(start, existing_start)
+            overlap_end = min(end, existing_end)
+
+            if overlap_start < overlap_end:
+                merged = True
+                covered_regions[i] = (min(start, existing_start), max(end, existing_end))
+                break
+        if not merged:
+            covered_regions.append(new_region)
+
+    total_covered_length = sum(end - start for start, end in covered_regions)
+    max_position = max(end for _, _, end in amplicon_positions) if amplicon_positions else 0
+    coverage_percentage = (total_covered_length / max_position) * 100 if max_position>0 else 0
+
+    return coverage_percentage
+
 
 reference_fasta = input("Path to Reference Genome file.fasta: ")
 primer_csv = input("Path to primer sequence file.csv (Must contain two headers- primer_label,primer_sequence): ")
 
-amplicon_graph = predict_amplicons(reference_fasta, primer_csv, max_mismatches=2)
+amplicon_graph, reference_seq_str, amplicons = predict_amplicons(reference_fasta, primer_csv, max_mismatches=3)
 
 # Output a Visualisation Graph
 plt.figure(figsize=(12, 6))
+
 amplicon_positions = [(n, d['start'], d['end']) for n, d in amplicon_graph.nodes(data=True) if d['type'] == 'amplicon']
 amplicon_positions.sort(key=lambda x: x[1])
-x_coords = [i for i, (_, start, end) in enumerate(amplicon_positions)]
-for i, (_, start, end) in enumerate(amplicon_positions):
-    plt.plot([start, end], [i, i], color='blue')  # Use plt.plot() for vertical lines
-for primer_label in amplicon_graph.nodes():
-    if amplicon_graph.nodes[primer_label]['type'] == 'primer':
-        plt.vlines(x=primer_label, ymin=-0.5, ymax=len(amplicon_positions) - 0.5, colors='red')
+y_coords = range(len(amplicon_positions))
 
-# Label it
+for i, (name, start, end) in enumerate(amplicon_positions):
+    plt.plot([start, end], [i, i], color='blue', linewidth=2)
+
+coverage = calculate_coverage_without_overlap(amplicon_positions)
+
 plt.xlabel('Reference Sequence Position')
 plt.ylabel('Amplicon')
-plt.yticks(range(len(amplicon_positions)), [amp[0] for amp in amplicon_positions])
+plt.yticks(y_coords, [amp[0] for amp in amplicon_positions])
 plt.title('Predicted Amplicons across the genome')
 
-plt.show()
+min_coord = min(amp[1] for amp in amplicon_positions)
+max_coord = max(amp[2] for amp in amplicon_positions)
+plt.xlim(min_coord - 10, max_coord + 10)
 
-print("Job Completed successfully!!!")
+plt.show()
+print("Predicted Coverage Percentage for input genome sequence is approximately ",round(coverage,2),"%.")
